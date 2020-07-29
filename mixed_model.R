@@ -1,12 +1,13 @@
 library(tidyverse)
 library(lme4)
 library(ggeffects)
+library(magrittr)
 library(sjPlot)
 library(arm)
 library(lattice)
 library(influence.ME)
 library(broom.mixed)
-
+select <- dplyr::select
 sis_df <- read_csv('https://raw.githubusercontent.com/z-feldman/AnalyticsChallenge2020/master/Data/AnalyticsChallenge2020Data.csv')
 madden_df <- read_rds(url('https://raw.githubusercontent.com/z-feldman/AnalyticsChallenge2020/master/Data/madden_ratings.rds'))
 player_df <- read_csv('https://raw.githubusercontent.com/z-feldman/AnalyticsChallenge2020/master/Data/madden_lookup.csv')
@@ -41,7 +42,7 @@ tech_df <- tech_df %>%
       is.na(next_tech_to_R) | is.na(next_tech_to_L) & (as.numeric(TechSide) >= 23 | as.numeric(TechSide) <= 1) | TechniqueName=='Outside' ~ 'EDGE',
       as.numeric(TechSide) >= 11 & as.numeric(TechSide) <= 13 & as.numeric(next_tech_to_R) >= 16 &  as.numeric(next_tech_to_L) <= 8 ~ 'NOSE',
       as.numeric(TechSide) >= 18 | as.numeric(TechSide) <= 6 ~ 'DT',
-      as.numeric(TechSide) >= 7 & as.numeric(TechSide) <= 17 ~ 'IDL',
+      as.numeric(TechSide) >= 7 & as.numeric(TechSide) <= 17 ~ 'DE',
       TRUE ~ 'None'
     )
   )
@@ -98,14 +99,27 @@ summary(glmer_sack)
 
 # Predict Pressure
 glmer_pressure <- pass_model %>% glmer(data = ., formula = Pressure ~ IsRushing + pass_down + ovr_rating + (1|pos_grp), family = "binomial")
-summary(glmer_pressure)
-tidy_pressure <- tidy(glmer_pressure, effects = "ran_vals")
+summary(glmer_pressure, type = "response")
+tidy_pressure_rv <- tidy(glmer_pressure, effects = "ran_vals")
+tidy_pressure_rv %<>% mutate(upper = estimate + 1.96*std.error, lower = estimate - 1.96*std.error)
+tidy_pressure_rv %<>% mutate(est_p = plogis(estimate), upp_p = plogis(upper), low_p = plogis(lower))
+tidy_pressure <- tidy(glmer_pressure)
+tidy_pressure %<>% mutate(est_p = plogis(estimate), std_err_p = plogis(std.error))
+tidy_pressure %<>% mutate(effect = if_else(effect == "ran_pars", "ran_pars - pos_grp", effect)) %>% select(-group) 
+tidy_pressure %<>% mutate(across(.cols = estimate:std_err_p, ~ round(.x, 2))) 
+tidy_pressure %<>% mutate(across(.cols = everything(), ~replace_na(.x, "-")))
 
 
-tidy_pressure %>% ggplot(aes(x = estimate, y = level)) +
+kable(tidy_pressure %>% select(effect, term, est_p, std_err_p, everything()), format = "simple")
+
+
+
+tidy_pressure_rv %>% ggplot(aes(x = est_p, y = level)) +
   geom_point() +
-  geom_linerange(aes(xmin = estimate - 1.96*std.error, xmax = estimate + 1.96*std.error)) +
-  labs(title = "Generating Pressure Random Effect of Position", xlab = "Change in Log Odds", ylab = "Position")
+  geom_linerange(aes(xmin = low_p, xmax = upp_p)) +
+  labs(title = "Generating Pressure - Random Effect of Position") +
+  xlab(label = "Probability") +
+  ylab(label = "Position")
 
 
 
